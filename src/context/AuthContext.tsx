@@ -1,11 +1,15 @@
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { AuthState, User } from '../types';
+import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { authAPI } from '../api';
+import { AuthState, User } from '../types';
 
 // Define the shape of the context
 interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  register: (
+    username: string,
+    email: string,
+    password: string
+  ) => Promise<void>;
   logout: () => void;
 }
 
@@ -65,52 +69,105 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
 };
 
 // Provider component
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
-  // Login function
   const login = async (username: string, password: string) => {
     dispatch({ type: 'AUTH_START' });
     try {
       const data = await authAPI.login(username, password);
-      const { access_token, user } = data;
-      localStorage.setItem('token', access_token);
+      console.log('Login data:', JSON.stringify(data, null, 2)); // Log full response
+
+      // Destructure the response
+      const {
+        tokens,
+        message,
+        username: name,
+        email,
+        user_id,
+        account_id,
+        balance,
+      } = data;
+      const { access: access_token } = tokens || {}; // Fallback to empty object if tokens is undefined
+      console.log('Access token:', access_token);
+      console.log('Type of access_token:', typeof access_token);
+
+      // Validate access_token
+      if (!access_token) {
+        throw new Error('Access token is missing in the API response');
+      }
+
+      // Create user object
+      const user = {
+        id: user_id || null,
+        username: name || username, // Fallback to input username if not in response
+        email: email || null,
+        account_id: account_id || null,
+        balance: balance || 0,
+      };
+
+      // Store token in localStorage
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.localStorage !== 'undefined'
+      ) {
+        try {
+          localStorage.setItem('token', access_token);
+          console.log(
+            'Immediate localStorage token:',
+            localStorage.getItem('token')
+          );
+          setTimeout(() => {
+            console.log(
+              'Delayed localStorage token:',
+              localStorage.getItem('token')
+            );
+          }, 100);
+        } catch (e) {
+          console.error('localStorage error:', e);
+          throw new Error(
+            'Failed to store authentication token due to browser restrictions'
+          );
+        }
+      } else {
+        throw new Error('localStorage is not available in this environment');
+      }
+
       dispatch({
         type: 'AUTH_SUCCESS',
         payload: { user, token: access_token },
       });
     } catch (error) {
-      dispatch({
-        type: 'AUTH_FAILURE',
-        payload: error instanceof Error ? error.message : 'Login failed',
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Login failed';
+      dispatch({ type: 'AUTH_FAILURE', payload: errorMessage });
       throw error;
     }
   };
-
   // Register function
-  const register = async (username: string, email: string, password: string) => {
+  const register = async (
+    username: string,
+    email: string,
+    password: string
+  ) => {
     dispatch({ type: 'AUTH_START' });
     try {
       const data = await authAPI.register(username, email, password);
       const { access_token } = data;
-      
-      // After registration, we need to get user data by logging in
-      const loginData = await authAPI.login(username, password);
       localStorage.setItem('token', access_token);
-      
+
+      // Simulate login after successful registration
+      const loginData = await authAPI.login(username, password);
       dispatch({
         type: 'AUTH_SUCCESS',
-        payload: { 
-          user: loginData.user, 
-          token: access_token
-        },
+        payload: { user: loginData.user, token: access_token },
       });
     } catch (error) {
-      dispatch({
-        type: 'AUTH_FAILURE',
-        payload: error instanceof Error ? error.message : 'Registration failed',
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Registration failed';
+      dispatch({ type: 'AUTH_FAILURE', payload: errorMessage });
       throw error;
     }
   };
@@ -138,7 +195,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logout,
   };
 
-  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
+  );
 };
 
 // Custom hook for using the auth context
