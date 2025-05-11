@@ -96,6 +96,16 @@ def init_db():
 # Initialize database on startup
 init_db()
 
+def convert_decimal(obj):
+    if isinstance(obj, list):
+        return [convert_decimal(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: convert_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    else:
+        return obj
+
 
 # Authentication routes
 @app.route("/api/register", methods=["POST"])
@@ -346,8 +356,6 @@ def delete_account(account_id):
         cursor.close()
         conn.close()
 
-
-# Transaction routes
 @app.route("/api/transactions", methods=["GET"])
 @jwt_required()
 def get_transactions():
@@ -386,13 +394,16 @@ def get_transactions():
             )
 
         transactions = cursor.fetchall()
-        return jsonify({"transactions": transactions}), 200
+        return jsonify({"transactions": convert_decimal(transactions)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         cursor.close()
         conn.close()
 
+from flask import request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from decimal import Decimal, InvalidOperation
 
 @app.route("/api/transactions", methods=["POST"])
 @jwt_required()
@@ -416,10 +427,10 @@ def create_transaction():
         return jsonify({"error": "Transfer destination account is required"}), 400
 
     try:
-        amount = float(amount)
+        amount = Decimal(str(amount))
         if amount <= 0:
             return jsonify({"error": "Amount must be positive"}), 400
-    except ValueError:
+    except (InvalidOperation, ValueError):
         return jsonify({"error": "Invalid amount"}), 400
 
     conn = get_db_connection()
@@ -454,7 +465,7 @@ def create_transaction():
                     {"error": "Destination account not found or not authorized"}
                 ), 404
 
-        # Update account balance
+        # Update balances
         if transaction_type == "income":
             new_balance = account["balance"] + amount
             cursor.execute(
@@ -488,7 +499,7 @@ def create_transaction():
                 (amount, transfer_to_account_id),
             )
 
-        # Create transaction record
+        # Insert transaction
         cursor.execute(
             """
             INSERT INTO transactions
@@ -506,16 +517,13 @@ def create_transaction():
         )
 
         transaction_id = cursor.lastrowid
-
-        # Commit transaction
         conn.commit()
 
-        return jsonify(
-            {
-                "message": "Transaction created successfully",
-                "transaction_id": transaction_id,
-            }
-        ), 201
+        return jsonify({
+            "message": "Transaction created successfully",
+            "transaction_id": transaction_id
+        }), 201
+
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 500
